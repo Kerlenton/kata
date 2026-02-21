@@ -1,32 +1,26 @@
-version: "2"
-
 linters:
-  default: none
+  disable-all: true
   enable:
-    - errcheck       # check that errors are handled
-    - gosimple       # simplify code
-    - govet          # go vet checks
-    - ineffassign    # detect ineffectual assignments
-    - staticcheck    # staticcheck suite
-    - unused         # detect unused code
-    - gofmt          # code formatting
-    - goimports      # import ordering
-    - misspell       # spelling mistakes in comments/strings
-    - godot          # comments should end with a period
-    - noctx          # detect http requests without context
-    - bodyclose      # ensure http response bodies are closed
-    - exportloopref  # detect loop variable capture (pre-Go 1.22)
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - bodyclose
+    - noctx
 
 linters-settings:
   gofmt:
     simplify: true
   goimports:
-    local-prefixes: github.com/yourusername/kata
+    local-prefixes: github.com/kerlenton/kata
 
 issues:
   exclude-rules:
-    # examples don't need to be as strict
     - path: examples/
       linters:
         - errcheck
-        - godot
