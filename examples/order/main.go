@@ -63,19 +63,19 @@ func main() {
 
 	hooks := kata.WithHooks(kata.Hooks{
 		OnStepStart: func(_ context.Context, name string) {
-			slog.Debug("▶ started", "step", name)
+			slog.Debug("step started", "step", name)
 		},
 		OnStepDone: func(_ context.Context, name string, d time.Duration) {
-			slog.Debug("✓ done", "step", name, "duration", d)
+			slog.Debug("step done", "step", name, "duration", d)
 		},
 		OnStepFailed: func(_ context.Context, name string, err error) {
-			slog.Error("✗ failed", "step", name, "err", err)
+			slog.Error("step failed", "step", name, "err", err)
 		},
 		OnCompensationStart: func(_ context.Context, name string) {
-			slog.Warn("↩ compensating", "step", name)
+			slog.Warn("compensating", "step", name)
 		},
 		OnCompensationDone: func(_ context.Context, name string) {
-			slog.Info("✓ compensated", "step", name)
+			slog.Info("compensation done", "step", name)
 		},
 	})
 
@@ -132,7 +132,7 @@ func runAndReport(runner *kata.Runner[*OrderState], state *OrderState) {
 	err := runner.Run(context.Background(), state)
 	fmt.Println()
 	if err == nil {
-		fmt.Println("✅ Order completed successfully")
+		fmt.Println("Order completed successfully")
 		return
 	}
 
@@ -141,12 +141,12 @@ func runAndReport(runner *kata.Runner[*OrderState], state *OrderState) {
 
 	switch {
 	case errors.As(err, &compErr):
-		fmt.Printf("🚨 Manual intervention required\n")
-		fmt.Printf("   Step %q failed: %v\n", compErr.StepName, compErr.StepCause)
+		fmt.Printf("ERROR: manual intervention required\n")
+		fmt.Printf("  Step %q failed: %v\n", compErr.StepName, compErr.StepCause)
 		for _, f := range compErr.Failed {
-			fmt.Printf("   Compensation %q also failed: %v\n", f.StepName, f.Err)
+			fmt.Printf("  Compensation %q also failed: %v\n", f.StepName, f.Err)
 		}
 	case errors.As(err, &stepErr):
-		fmt.Printf("⚠️  Rolled back cleanly - step %q failed: %v\n", stepErr.StepName, stepErr.Cause)
+		fmt.Printf("WARN: rolled back cleanly - step %q failed: %v\n", stepErr.StepName, stepErr.Cause)
 	}
 }
