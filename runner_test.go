@@ -259,7 +259,7 @@ func TestHooks(t *testing.T) {
 	}))
 
 	s := &testState{fail: "b"}
-	runner.Run(context.Background(), s)
+	_ = runner.Run(context.Background(), s)
 
 	assertLog(t, hookLog, []string{"start:a", "done:a", "start:b", "failed:b", "comp-start:a", "comp-done:a"})
 }
