@@ -3,6 +3,7 @@ package kata_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -209,12 +210,12 @@ func TestParallelOneFailsCompensatesSucceeded(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when parallel step fails")
 	}
-	// b failed → should NOT be compensated
-	if contains(log, "undo:b") {
+	// b failed -> should NOT be compensated
+	if slices.Contains(log, "undo:b") {
 		t.Error("b was compensated but it failed - must not be compensated")
 	}
-	// a and c succeeded → must be compensated
-	if !contains(log, "undo:a") || !contains(log, "undo:c") {
+	// a and c succeeded -> must be compensated
+	if !slices.Contains(log, "undo:a") || !slices.Contains(log, "undo:c") {
 		t.Errorf("expected undo:a and undo:c, got: %v", log)
 	}
 }
@@ -277,13 +278,4 @@ func assertLog(t *testing.T, got, want []string) {
 			t.Errorf("[%d] got %q, want %q", i, got[i], want[i])
 		}
 	}
-}
-
-func contains(log []string, s string) bool {
-	for _, v := range log {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

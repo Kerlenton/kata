@@ -66,7 +66,7 @@ Steps can be retried with configurable backoff:
 ```go
 kata.Step("call-flaky-api", callAPI).
     Retry(3, kata.Exponential(100*time.Millisecond))
-    // attempts: immediate → 100ms → 200ms → 400ms
+    // attempts: immediate -> 100ms -> 200ms -> 400ms
 
 kata.Step("call-another", callOther).
     Retry(5, kata.Fixed(1*time.Second))
