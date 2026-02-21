@@ -1,0 +1,25 @@
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - gofmt
+    - goimports
+    - misspell
+    - bodyclose
+    - noctx
+
+linters-settings:
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: github.com/kerlenton/kata
+
+issues:
+  exclude-rules:
+    - path: examples/
+      linters:
+        - errcheck
