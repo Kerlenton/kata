@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `OnCompensationStart`, `OnCompensationDone`, `OnCompensationFailed`
 - `Runner.WithOptions(opts...)` - attach options to an existing runner non-destructively
 - Zero external dependencies
-- Requires Go 1.21+
+- Requires Go 1.22+
 
 [Unreleased]: https://github.com/kerlenton/kata/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/kerlenton/kata/releases/tag/v0.1.0
