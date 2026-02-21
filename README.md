@@ -36,7 +36,7 @@ kata sits in the middle: **zero dependencies**, idiomatic Go, production-ready f
 go get github.com/kerlenton/kata
 ```
 
-Requires Go 1.21+.
+Requires Go 1.22+.
 
 ---
 
