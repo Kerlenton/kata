@@ -2,6 +2,7 @@ package kata
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -81,14 +82,40 @@ func (p *ParallelDef[T]) execute(ctx context.Context, state T, h Hooks) error {
 	wg.Wait()
 
 	// Collect step failures.
+	// context.Canceled is filtered out when it is sibling-induced: one step fails,
+	// the group calls cancel(), and surviving siblings return context.Canceled as a
+	// side-effect — that is noise, not an additional failure.
+	//
+	// However, if the *outer* ctx was cancelled by an external caller (SIGTERM,
+	// request timeout, etc.) before any step had a real domain error, every step
+	// will return a wrapped context.Canceled. filteredCanceled tracks whether any
+	// such error was silenced so we can detect this case below.
 	var errs []string
+	var filteredCanceled bool
 	for _, r := range results {
-		if r.err != nil && r.err != context.Canceled {
+		if r.err == nil {
+			continue
+		}
+		if errors.Is(r.err, context.Canceled) {
+			filteredCanceled = true
+		} else {
 			errs = append(errs, fmt.Sprintf("%s: %v", p.steps[r.idx].name, r.err))
 		}
 	}
 
 	if len(errs) == 0 {
+		// All errors (if any) were context.Canceled. Two sub-cases:
+		//   a) No real failure — every step succeeded. Happy path.
+		//   b) External ctx was cancelled — every step was interrupted from outside.
+		//      Distinguish via ctx.Err(): if the *outer* context is done and we did
+		//      filter at least one cancellation, the group was externally aborted.
+		if filteredCanceled && ctx.Err() != nil {
+			extErr := fmt.Errorf("parallel group %q aborted: %w", p.name, ctx.Err())
+			if h.OnStepFailed != nil {
+				h.OnStepFailed(ctx, p.name, extErr)
+			}
+			return extErr
+		}
 		if h.OnStepDone != nil {
 			h.OnStepDone(ctx, p.name, time.Since(start))
 		}
