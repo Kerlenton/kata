@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Compensations now run with `context.Background()` instead of the caller's context,
   ensuring rollback completes even when the outer context is cancelled (e.g. SIGTERM)
 - `Parallel` group now correctly reports `OnStepDone` duration instead of always passing `0`
+- `Parallel` group now returns `*CompensationError` when internal compensations fail instead of silently ignoring them
 
 ## [0.1.0] - 2026-02-21
 ### Added
