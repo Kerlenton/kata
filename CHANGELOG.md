@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ensuring rollback completes even when the outer context is cancelled (e.g. SIGTERM)
 - `Parallel` group now correctly reports `OnStepDone` duration instead of always passing `0`
 - `Parallel` group now returns `*CompensationError` when internal compensations fail instead of silently ignoring them
+- `Parallel` group now uses `errors.Is` instead of `==` when filtering `context.Canceled` from sibling steps,
+  preventing wrapped cancellations from leaking into the error message and triggering spurious compensations
+- `Parallel` group now returns an error when all steps are interrupted by an externally cancelled context
+  instead of silently returning `nil`
 
 ## [0.1.0] - 2026-02-21
 ### Added
