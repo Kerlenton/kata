@@ -357,6 +357,34 @@ func TestParallelGroupCompensatedByOuterRunner(t *testing.T) {
 	}
 }
 
+func TestParallelCompensationFailureReturnsCompensationError(t *testing.T) {
+	runner := kata.New(
+		kata.Parallel("group",
+			kata.Step("a",
+				func(_ context.Context, _ *testState) error { return nil },
+			).Compensate(func(_ context.Context, _ *testState) error {
+				return errors.New("comp of a failed")
+			}),
+			kata.Step("b",
+				func(_ context.Context, _ *testState) error { return errors.New("b failed") },
+			),
+		),
+	)
+
+	err := runner.Run(context.Background(), &testState{})
+
+	var compErr *kata.CompensationError
+	if !errors.As(err, &compErr) {
+		t.Fatalf("expected *CompensationError, got %T: %v", err, err)
+	}
+	if compErr.StepName != "group" {
+		t.Errorf("wrong StepName: %q", compErr.StepName)
+	}
+	if len(compErr.Failed) != 1 || compErr.Failed[0].StepName != "a" {
+		t.Errorf("unexpected failures: %+v", compErr.Failed)
+	}
+}
+
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 
 func TestHooks(t *testing.T) {

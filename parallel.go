@@ -80,7 +80,7 @@ func (p *ParallelDef[T]) execute(ctx context.Context, state T, h Hooks) error {
 
 	wg.Wait()
 
-	// Collect failures
+	// Collect step failures.
 	var errs []string
 	for _, r := range results {
 		if r.err != nil && r.err != context.Canceled {
@@ -97,18 +97,29 @@ func (p *ParallelDef[T]) execute(ctx context.Context, state T, h Hooks) error {
 
 	// Some steps failed - compensate those that succeeded, in reverse order.
 	// Use context.Background() so compensation is not affected by cancellation.
+	var compFailures []CompensationFailure
 	for i := len(p.steps) - 1; i >= 0; i-- {
 		if !completed[i] {
 			continue
 		}
-		p.steps[i].rollback(context.Background(), state, h)
+		compFailures = append(compFailures, p.steps[i].rollback(context.Background(), state, h)...)
 	}
 
-	err := fmt.Errorf("parallel group %q failed: %s", p.name, strings.Join(errs, "; "))
+	stepCause := fmt.Errorf("parallel group %q failed: %s", p.name, strings.Join(errs, "; "))
+
 	if h.OnStepFailed != nil {
-		h.OnStepFailed(ctx, p.name, err)
+		h.OnStepFailed(ctx, p.name, stepCause)
 	}
-	return err
+
+	if len(compFailures) > 0 {
+		return &CompensationError{
+			StepName:  p.name,
+			StepCause: stepCause,
+			Failed:    compFailures,
+		}
+	}
+
+	return stepCause
 }
 
 // rollback is called by the Runner when a later sequential step fails.
