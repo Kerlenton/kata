@@ -151,6 +151,120 @@ func TestTimeout(t *testing.T) {
 	}
 }
 
+// ── Cancelled context (SIGTERM simulation) ────────────────────────────────────
+
+// TestCompensationRunsAfterContextCancelled verifies that when the outer context
+// is cancelled (e.g. SIGTERM) compensation still runs to completion.
+// This is the key correctness guarantee: rollback must not be skipped just
+// because the caller's context is gone.
+func TestCompensationRunsAfterContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	compensated := false
+
+	runner := kata.New(
+		kata.Step("a", func(_ context.Context, s *testState) error {
+			s.append("do:a")
+			return nil
+		}).Compensate(func(_ context.Context, s *testState) error {
+			compensated = true
+			s.append("undo:a")
+			return nil
+		}),
+		kata.Step("b", func(_ context.Context, _ *testState) error {
+			// Cancel the context mid-run to simulate SIGTERM, then fail.
+			cancel()
+			return errors.New("b failed")
+		}),
+	)
+
+	s := &testState{}
+	err := runner.Run(ctx, s)
+
+	var stepErr *kata.StepError
+	if !errors.As(err, &stepErr) {
+		t.Fatalf("expected *StepError, got %T: %v", err, err)
+	}
+	if !compensated {
+		t.Error("compensation did not run after context cancellation")
+	}
+	assertLog(t, s.log, []string{"do:a", "undo:a"})
+}
+
+// TestCompensationContextIsNotCancelled verifies that the context passed to
+// compensation functions is not the cancelled outer context.
+func TestCompensationContextIsNotCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	compCtxAlive := false
+
+	runner := kata.New(
+		kata.Step("a", func(_ context.Context, s *testState) error {
+			s.append("do:a")
+			return nil
+		}).Compensate(func(ctx context.Context, s *testState) error {
+			// Compensation should receive a fresh context, not the cancelled one.
+			compCtxAlive = ctx.Err() == nil
+			s.append("undo:a")
+			return nil
+		}),
+		kata.Step("b", func(_ context.Context, _ *testState) error {
+			cancel()
+			return errors.New("b failed")
+		}),
+	)
+
+	s := &testState{}
+	_ = runner.Run(ctx, s)
+
+	if !compCtxAlive {
+		t.Error("compensation received a cancelled context, expected fresh context.Background()")
+	}
+}
+
+// TestCancelledContextCompensationCompletes verifies all compensations run fully
+// even when the context is cancelled before the failing step.
+func TestCancelledContextCompensationCompletes(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var compLog []string
+	var mu sync.Mutex
+	appendComp := func(name string) {
+		mu.Lock()
+		compLog = append(compLog, name)
+		mu.Unlock()
+	}
+
+	runner := kata.New(
+		kata.Step("a", func(_ context.Context, _ *testState) error {
+			return nil
+		}).Compensate(func(_ context.Context, _ *testState) error {
+			appendComp("undo:a")
+			return nil
+		}),
+		kata.Step("b", func(_ context.Context, _ *testState) error {
+			return nil
+		}).Compensate(func(_ context.Context, _ *testState) error {
+			appendComp("undo:b")
+			return nil
+		}),
+		kata.Step("c", func(_ context.Context, _ *testState) error {
+			cancel() // cancel before c fails
+			return errors.New("c failed")
+		}),
+	)
+
+	err := runner.Run(ctx, &testState{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	// Both a and b must be compensated despite cancelled ctx.
+	if !slices.Contains(compLog, "undo:a") || !slices.Contains(compLog, "undo:b") {
+		t.Errorf("not all compensations ran: %v", compLog)
+	}
+}
+
 // ── Parallel ──────────────────────────────────────────────────────────────────
 
 func TestParallelAllSucceed(t *testing.T) {

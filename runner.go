@@ -15,12 +15,12 @@ type Runner[T any] struct {
 //
 // Steps execute in order. On failure, completed steps are compensated in reverse.
 //
-//	runner := flow.New(
-//	    flow.Step("charge", chargeCard).Compensate(refundCard).Retry(3, flow.Exponential(100*time.Millisecond)),
-//	    flow.Step("reserve", reserveStock).Compensate(releaseStock),
-//	    flow.Parallel("notify",
-//	        flow.Step("email", sendEmail),
-//	        flow.Step("sms",   sendSMS),
+//	runner := kata.New(
+//	    kata.Step("charge", chargeCard).Compensate(refundCard).Retry(3, kata.Exponential(100*time.Millisecond)),
+//	    kata.Step("reserve", reserveStock).Compensate(releaseStock),
+//	    kata.Parallel("notify",
+//	        kata.Step("email", sendEmail),
+//	        kata.Step("sms",   sendSMS),
 //	    ),
 //	)
 func New[T any](steps ...steper[T]) *Runner[T] {
@@ -30,7 +30,7 @@ func New[T any](steps ...steper[T]) *Runner[T] {
 // WithOptions returns a new Runner with the given options applied.
 // Useful when you want to add hooks without changing the step definitions.
 //
-//	runner := flow.New(step1, step2).WithOptions(flow.WithHooks(myHooks))
+//	runner := kata.New(step1, step2).WithOptions(kata.WithHooks(myHooks))
 func (r *Runner[T]) WithOptions(opts ...RunnerOption) *Runner[T] {
 	cfg := r.config
 	for _, o := range opts {
@@ -51,7 +51,9 @@ func (r *Runner[T]) Run(ctx context.Context, state T) error {
 
 	for _, step := range r.steps {
 		if err := step.execute(ctx, state, h); err != nil {
-			compFailures := r.compensate(ctx, completed, state, h)
+			// Use context.Background() for compensation so that a cancelled/deadline-exceeded
+			// ctx (e.g. from SIGTERM) does not prevent rollback from running to completion.
+			compFailures := r.compensate(context.Background(), completed, state, h)
 			if len(compFailures) > 0 {
 				return &CompensationError{
 					StepName:  step.stepName(),

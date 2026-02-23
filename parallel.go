@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ParallelDef runs a group of steps concurrently.
@@ -16,7 +17,7 @@ import (
 //   - If the whole group succeeds and a later sequential step fails,
 //     all steps in the group are compensated in reverse order.
 //
-// Use flow.Parallel() to create one.
+// Use kata.Parallel() to create one.
 type ParallelDef[T any] struct {
 	name  string
 	steps []*StepDef[T]
@@ -24,10 +25,10 @@ type ParallelDef[T any] struct {
 
 // Parallel creates a group of steps that execute concurrently.
 //
-//	flow.Parallel("notifications",
-//	    flow.Step("email", sendEmail),
-//	    flow.Step("sms",   sendSMS).Compensate(cancelSMS),
-//	    flow.Step("push",  sendPush),
+//	kata.Parallel("notifications",
+//	    kata.Step("email", sendEmail),
+//	    kata.Step("sms",   sendSMS).Compensate(cancelSMS),
+//	    kata.Step("push",  sendPush),
 //	)
 func Parallel[T any](name string, steps ...*StepDef[T]) *ParallelDef[T] {
 	return &ParallelDef[T]{name: name, steps: steps}
@@ -44,7 +45,9 @@ func (p *ParallelDef[T]) execute(ctx context.Context, state T, h Hooks) error {
 		h.OnStepStart(ctx, p.name)
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
+	start := time.Now()
+
+	execCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	type result struct {
@@ -54,7 +57,7 @@ func (p *ParallelDef[T]) execute(ctx context.Context, state T, h Hooks) error {
 
 	results := make([]result, len(p.steps))
 	var mu sync.Mutex
-	completed := make([]bool, len(p.steps)) // tracks which steps succeeded
+	completed := make([]bool, len(p.steps))
 
 	var wg sync.WaitGroup
 	wg.Add(len(p.steps))
@@ -63,13 +66,13 @@ func (p *ParallelDef[T]) execute(ctx context.Context, state T, h Hooks) error {
 		i, step := i, step
 		go func() {
 			defer wg.Done()
-			err := step.execute(ctx, state, h)
+			err := step.execute(execCtx, state, h)
 			mu.Lock()
 			results[i] = result{idx: i, err: err}
 			if err == nil {
 				completed[i] = true
 			} else {
-				cancel() // signal other steps to stop
+				cancel()
 			}
 			mu.Unlock()
 		}()
@@ -87,17 +90,17 @@ func (p *ParallelDef[T]) execute(ctx context.Context, state T, h Hooks) error {
 
 	if len(errs) == 0 {
 		if h.OnStepDone != nil {
-			h.OnStepDone(ctx, p.name, 0)
+			h.OnStepDone(ctx, p.name, time.Since(start))
 		}
 		return nil
 	}
 
-	// Some steps failed - compensate those that succeeded, in reverse order
+	// Some steps failed - compensate those that succeeded, in reverse order.
+	// Use context.Background() so compensation is not affected by cancellation.
 	for i := len(p.steps) - 1; i >= 0; i-- {
 		if !completed[i] {
 			continue
 		}
-		// Use background context - outer ctx may be cancelled
 		p.steps[i].rollback(context.Background(), state, h)
 	}
 
