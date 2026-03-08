@@ -18,20 +18,47 @@ import (
 //   - If the whole group succeeds and a later sequential step fails,
 //     all steps in the group are compensated in reverse order.
 //
+// # Thread Safety
+//
+// All steps in a parallel group run concurrently and share the same state T.
+// The caller is responsible for synchronizing concurrent access to shared
+// fields. Common approaches:
+//   - Use a sync.Mutex in your state struct for fields written by parallel steps.
+//   - Assign disjoint fields to each step (e.g. step "email" writes EmailSentAt,
+//     step "sms" writes SmsSentAt) so no synchronization is needed.
+//
+// # Nesting
+//
+// Parallel groups can contain other parallel groups:
+//
+//	kata.Parallel("all-notifications",
+//	    kata.Parallel("customer",
+//	        kata.Step("email", sendEmail),
+//	        kata.Step("sms", sendSMS),
+//	    ),
+//	    kata.Parallel("internal",
+//	        kata.Step("slack", notifySlack),
+//	        kata.Step("analytics", trackEvent),
+//	    ),
+//	)
+//
 // Use kata.Parallel() to create one.
 type ParallelDef[T any] struct {
 	name  string
-	steps []*StepDef[T]
+	steps []stepper[T]
 }
 
 // Parallel creates a group of steps that execute concurrently.
+//
+// Accepts both [Step] and nested [Parallel] groups.
+// All steps share state T concurrently - see [ParallelDef] for thread safety notes.
 //
 //	kata.Parallel("notifications",
 //	    kata.Step("email", sendEmail),
 //	    kata.Step("sms",   sendSMS).Compensate(cancelSMS),
 //	    kata.Step("push",  sendPush),
 //	)
-func Parallel[T any](name string, steps ...*StepDef[T]) *ParallelDef[T] {
+func Parallel[T any](name string, steps ...stepper[T]) *ParallelDef[T] {
 	return &ParallelDef[T]{name: name, steps: steps}
 }
 
@@ -84,7 +111,7 @@ func (p *ParallelDef[T]) execute(ctx context.Context, state T, h Hooks) error {
 	// Collect step failures.
 	// context.Canceled is filtered out when it is sibling-induced: one step fails,
 	// the group calls cancel(), and surviving siblings return context.Canceled as a
-	// side-effect — that is noise, not an additional failure.
+	// side-effect - that is noise, not an additional failure.
 	//
 	// However, if the *outer* ctx was cancelled by an external caller (SIGTERM,
 	// request timeout, etc.) before any step had a real domain error, every step
@@ -99,16 +126,11 @@ func (p *ParallelDef[T]) execute(ctx context.Context, state T, h Hooks) error {
 		if errors.Is(r.err, context.Canceled) {
 			filteredCanceled = true
 		} else {
-			errs = append(errs, fmt.Sprintf("%s: %v", p.steps[r.idx].name, r.err))
+			errs = append(errs, fmt.Sprintf("%s: %v", p.steps[r.idx].stepName(), r.err))
 		}
 	}
 
 	if len(errs) == 0 {
-		// All errors (if any) were context.Canceled. Two sub-cases:
-		//   a) No real failure — every step succeeded. Happy path.
-		//   b) External ctx was cancelled — every step was interrupted from outside.
-		//      Distinguish via ctx.Err(): if the *outer* context is done and we did
-		//      filter at least one cancellation, the group was externally aborted.
 		if filteredCanceled && ctx.Err() != nil {
 			extErr := fmt.Errorf("parallel group %q aborted: %w", p.name, ctx.Err())
 			if h.OnStepFailed != nil {

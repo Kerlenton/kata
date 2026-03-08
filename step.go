@@ -9,7 +9,7 @@ import (
 type StepFunc[T any] func(ctx context.Context, state T) error
 
 // StepDef defines a single sequential step with its configuration.
-// Create one with flow.Step(), then chain builder methods to configure it.
+// Create one with kata.Step(), then chain builder methods to configure it.
 type StepDef[T any] struct {
 	name        string
 	fn          StepFunc[T]
@@ -21,9 +21,9 @@ type StepDef[T any] struct {
 
 // Step creates a new step definition with the given name and function.
 //
-//	flow.Step("charge-card", chargeCard).
+//	kata.Step("charge-card", chargeCard).
 //	    Compensate(refundCard).
-//	    Retry(3, flow.Exponential(100*time.Millisecond)).
+//	    Retry(3, kata.Exponential(100*time.Millisecond)).
 //	    Timeout(10*time.Second)
 func Step[T any](name string, fn StepFunc[T]) *StepDef[T] {
 	return &StepDef[T]{
@@ -53,7 +53,7 @@ func (s *StepDef[T]) Timeout(d time.Duration) *StepDef[T] {
 	return s
 }
 
-// --- steper interface ---
+// --- stepper interface ---
 
 func (s *StepDef[T]) stepName() string { return s.name }
 
@@ -63,7 +63,15 @@ func (s *StepDef[T]) execute(ctx context.Context, state T, h Hooks) error {
 	}
 
 	start := time.Now()
-	err := withRetry(ctx, s.retryCount, s.retryPolicy, func(ctx context.Context) error {
+
+	var onRetry func(attempt int, err error)
+	if h.OnRetry != nil {
+		onRetry = func(attempt int, err error) {
+			h.OnRetry(ctx, s.name, attempt, err)
+		}
+	}
+
+	err := withRetry(ctx, s.retryCount, s.retryPolicy, onRetry, func(ctx context.Context) error {
 		return withTimeout(ctx, s.timeout, func(ctx context.Context) error {
 			return s.fn(ctx, state)
 		})

@@ -16,6 +16,10 @@ type Hooks struct {
 	// OnStepFailed is called when a step fails (after all retries are exhausted).
 	OnStepFailed func(ctx context.Context, name string, err error)
 
+	// OnRetry is called before each retry attempt.
+	// attempt starts at 1 (first retry), err is the error from the previous attempt.
+	OnRetry func(ctx context.Context, name string, attempt int, err error)
+
 	// OnCompensationStart is called before a compensation function begins.
 	OnCompensationStart func(ctx context.Context, name string)
 

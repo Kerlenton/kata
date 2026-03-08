@@ -7,7 +7,7 @@ import (
 // Runner orchestrates a sequence of steps with automatic compensation on failure.
 // It is safe to reuse a Runner across multiple Run calls (e.g. per-request).
 type Runner[T any] struct {
-	steps  []steper[T]
+	steps  []stepper[T]
 	config runnerConfig
 }
 
@@ -23,7 +23,7 @@ type Runner[T any] struct {
 //	        kata.Step("sms",   sendSMS),
 //	    ),
 //	)
-func New[T any](steps ...steper[T]) *Runner[T] {
+func New[T any](steps ...stepper[T]) *Runner[T] {
 	return &Runner[T]{steps: steps}
 }
 
@@ -41,15 +41,36 @@ func (r *Runner[T]) WithOptions(opts ...RunnerOption) *Runner[T] {
 
 // Run executes all steps in order against the given state.
 //
+// If the context is cancelled between steps, the runner stops and compensates
+// all completed steps. Compensation always runs with context.Background() to
+// guarantee rollback completes even after cancellation (e.g. SIGTERM).
+//
 // Returns:
 //   - nil on success
 //   - *StepError if a step failed and all compensations ran successfully
 //   - *CompensationError if a step failed AND some compensations also failed
 func (r *Runner[T]) Run(ctx context.Context, state T) error {
 	h := r.config.hooks
-	completed := make([]steper[T], 0, len(r.steps))
+	completed := make([]stepper[T], 0, len(r.steps))
 
 	for _, step := range r.steps {
+		// Check context between steps so we don't start new work after
+		// cancellation (e.g. SIGTERM, request timeout).
+		if ctx.Err() != nil {
+			compFailures := r.compensate(context.Background(), completed, state, h)
+			if len(compFailures) > 0 {
+				return &CompensationError{
+					StepName:  step.stepName(),
+					StepCause: ctx.Err(),
+					Failed:    compFailures,
+				}
+			}
+			return &StepError{
+				StepName: step.stepName(),
+				Cause:    ctx.Err(),
+			}
+		}
+
 		if err := step.execute(ctx, state, h); err != nil {
 			// Use context.Background() for compensation so that a cancelled/deadline-exceeded
 			// ctx (e.g. from SIGTERM) does not prevent rollback from running to completion.
@@ -72,7 +93,7 @@ func (r *Runner[T]) Run(ctx context.Context, state T) error {
 }
 
 // compensate runs rollback for all completed steps in reverse order.
-func (r *Runner[T]) compensate(ctx context.Context, completed []steper[T], state T, h Hooks) []CompensationFailure {
+func (r *Runner[T]) compensate(ctx context.Context, completed []stepper[T], state T, h Hooks) []CompensationFailure {
 	var failures []CompensationFailure
 	for i := len(completed) - 1; i >= 0; i-- {
 		failures = append(failures, completed[i].rollback(ctx, state, h)...)

@@ -71,6 +71,9 @@ func main() {
 		OnStepFailed: func(_ context.Context, name string, err error) {
 			slog.Error("step failed", "step", name, "err", err)
 		},
+		OnRetry: func(_ context.Context, name string, attempt int, err error) {
+			slog.Warn("retrying", "step", name, "attempt", attempt, "err", err)
+		},
 		OnCompensationStart: func(_ context.Context, name string) {
 			slog.Warn("compensating", "step", name)
 		},
@@ -82,7 +85,7 @@ func main() {
 	runner := kata.New(
 		kata.Step("charge-card", chargeCard).
 			Compensate(refundCard).
-			Retry(3, kata.Exponential(50*time.Millisecond)).
+			Retry(3, kata.Jitter(kata.Exponential(50*time.Millisecond))).
 			Timeout(10*time.Second),
 
 		kata.Step("reserve-stock", reserveStock).
