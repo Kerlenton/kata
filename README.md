@@ -113,6 +113,21 @@ kata.Parallel("notify-customer",
 
 If a later sequential step fails after the parallel group succeeds, all steps in the group are compensated in reverse order.
 
+Parallel groups can be nested - useful when you have logically distinct groups that should run concurrently with each other:
+
+```go
+kata.Parallel("all-notifications",
+    kata.Parallel("customer",
+        kata.Step("email", sendEmail),
+        kata.Step("sms",   sendSMS),
+    ),
+    kata.Parallel("internal",
+        kata.Step("slack",     notifySlack),
+        kata.Step("analytics", trackEvent),
+    ),
+)
+```
+
 **Thread safety:** all steps in a parallel group share state `T` concurrently. Either assign disjoint fields to each step, or protect shared fields with a `sync.Mutex` in your state struct.
 
 ### Runner
@@ -296,6 +311,7 @@ func PlaceOrder(ctx context.Context, req *Request) error {
 | Persistent state | plug-in | ✓ | PostgreSQL | ✗ |
 | Generics (typed state) | ✓ | ✗ | ✗ | ✗ |
 | Parallel steps | ✓ | ✓ | ✓ | ✗ |
+| Nested parallel groups | ✓ | ✓ | ✗ | ✗ |
 | Per-step retry + backoff | ✓ | ✓ | ✓ | ✗ |
 | Per-step timeout | ✓ | ✓ | ✗ | ✗ |
 | Composable retry policies | ✓ | ✗ | ✗ | ✗ |

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Split tests into per-module files: `runner_test.go`, `parallel_test.go`, `retry_test.go`, `hooks_test.go`, `bench_test.go`, `common_test.go`
 
 ### Changed
+- `kata.Parallel()` now accepts both `Step` and nested `Parallel` groups (previously only `*StepDef`)
 - Renamed internal interface `steper` → `stepper` (unexported, no breaking change)
 - `withRetry` now accepts an `onRetry` callback parameter (internal, no breaking change)
 

@@ -196,3 +196,115 @@ func TestParallelAllFail(t *testing.T) {
 		t.Fatal("expected error when all parallel steps fail")
 	}
 }
+
+// ── Nested parallel groups ────────────────────────────────────────────────────
+
+func TestNestedParallelAllSucceed(t *testing.T) {
+	var count atomic.Int32
+
+	runner := kata.New(
+		kata.Parallel("outer",
+			kata.Parallel("inner-a",
+				kata.Step("a1", func(_ context.Context, _ *testState) error { count.Add(1); return nil }),
+				kata.Step("a2", func(_ context.Context, _ *testState) error { count.Add(1); return nil }),
+			),
+			kata.Parallel("inner-b",
+				kata.Step("b1", func(_ context.Context, _ *testState) error { count.Add(1); return nil }),
+				kata.Step("b2", func(_ context.Context, _ *testState) error { count.Add(1); return nil }),
+			),
+		),
+	)
+	if err := runner.Run(context.Background(), &testState{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count.Load() != 4 {
+		t.Errorf("expected 4 steps to run, got %d", count.Load())
+	}
+}
+
+func TestNestedParallelInnerFailure(t *testing.T) {
+	var compA1 atomic.Bool
+
+	runner := kata.New(
+		kata.Parallel("outer",
+			kata.Parallel("inner-a",
+				kata.Step("a1", func(_ context.Context, _ *testState) error {
+					return nil
+				}).Compensate(func(_ context.Context, _ *testState) error {
+					compA1.Store(true)
+					return nil
+				}),
+				kata.Step("a2", func(_ context.Context, _ *testState) error {
+					return errors.New("a2 failed")
+				}),
+			),
+			kata.Step("b", func(_ context.Context, _ *testState) error {
+				return nil
+			}),
+		),
+	)
+	err := runner.Run(context.Background(), &testState{})
+	if err == nil {
+		t.Fatal("expected error from nested parallel failure")
+	}
+	// a1 succeeded within inner-a, should be compensated when a2 fails.
+	if !compA1.Load() {
+		t.Error("a1 in inner group was not compensated after a2 failed")
+	}
+}
+
+func TestNestedParallelRollbackFromLaterStep(t *testing.T) {
+	var compA, compB atomic.Bool
+
+	runner := kata.New(
+		kata.Parallel("outer",
+			kata.Parallel("inner",
+				kata.Step("a", func(_ context.Context, _ *testState) error {
+					return nil
+				}).Compensate(func(_ context.Context, _ *testState) error {
+					compA.Store(true)
+					return nil
+				}),
+			),
+			kata.Step("b", func(_ context.Context, _ *testState) error {
+				return nil
+			}).Compensate(func(_ context.Context, _ *testState) error {
+				compB.Store(true)
+				return nil
+			}),
+		),
+		kata.Step("after", func(_ context.Context, _ *testState) error {
+			return errors.New("after failed")
+		}),
+	)
+	err := runner.Run(context.Background(), &testState{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !compA.Load() || !compB.Load() {
+		t.Errorf("nested parallel steps not compensated: a=%v b=%v", compA.Load(), compB.Load())
+	}
+}
+
+func TestNestedParallelMixedWithSteps(t *testing.T) {
+	var count atomic.Int32
+
+	runner := kata.New(
+		kata.Parallel("mixed",
+			kata.Step("plain", func(_ context.Context, _ *testState) error {
+				count.Add(1)
+				return nil
+			}),
+			kata.Parallel("nested",
+				kata.Step("n1", func(_ context.Context, _ *testState) error { count.Add(1); return nil }),
+				kata.Step("n2", func(_ context.Context, _ *testState) error { count.Add(1); return nil }),
+			),
+		),
+	)
+	if err := runner.Run(context.Background(), &testState{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if count.Load() != 3 {
+		t.Errorf("expected 3 steps, got %d", count.Load())
+	}
+}
