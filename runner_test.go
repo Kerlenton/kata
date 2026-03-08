@@ -367,6 +367,35 @@ func TestContextDeadlineBetweenSteps(t *testing.T) {
 	}
 }
 
+func TestContextCheckedBetweenStepsCompensationError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	runner := kata.New(
+		kata.Step("a", func(_ context.Context, s *testState) error {
+			s.append("do:a")
+			cancel()
+			return nil
+		}).Compensate(func(_ context.Context, _ *testState) error {
+			return errors.New("comp a failed")
+		}),
+		kata.Step("b", func(_ context.Context, s *testState) error {
+			s.append("do:b")
+			return nil
+		}),
+	)
+
+	s := &testState{}
+	err := runner.Run(ctx, s)
+
+	var compErr *kata.CompensationError
+	if !errors.As(err, &compErr) {
+		t.Fatalf("expected *CompensationError, got %T: %v", err, err)
+	}
+	if !errors.Is(compErr.StepCause, context.Canceled) {
+		t.Errorf("expected context.Canceled as step cause, got %v", compErr.StepCause)
+	}
+}
+
 // ── Timeout ───────────────────────────────────────────────────────────────────
 
 func TestTimeout(t *testing.T) {

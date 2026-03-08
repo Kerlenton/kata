@@ -28,8 +28,18 @@ func BenchmarkRunnerSequential3Steps(b *testing.B) {
 
 func BenchmarkRunnerSequential10Steps(b *testing.B) {
 	noop := func(_ context.Context, _ *testState) error { return nil }
-	s := kata.Step("s", noop).Compensate(noop)
-	runner := kata.New(s, s, s, s, s, s, s, s, s, s)
+	runner := kata.New(
+		kata.Step("s0", noop).Compensate(noop),
+		kata.Step("s1", noop).Compensate(noop),
+		kata.Step("s2", noop).Compensate(noop),
+		kata.Step("s3", noop).Compensate(noop),
+		kata.Step("s4", noop).Compensate(noop),
+		kata.Step("s5", noop).Compensate(noop),
+		kata.Step("s6", noop).Compensate(noop),
+		kata.Step("s7", noop).Compensate(noop),
+		kata.Step("s8", noop).Compensate(noop),
+		kata.Step("s9", noop),
+	)
 
 	b.ReportAllocs()
 	b.ResetTimer()
