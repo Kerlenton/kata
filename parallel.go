@@ -18,6 +18,15 @@ import (
 //   - If the whole group succeeds and a later sequential step fails,
 //     all steps in the group are compensated in reverse order.
 //
+// # Thread Safety
+//
+// All steps in a parallel group run concurrently and share the same state T.
+// The caller is responsible for synchronizing concurrent access to shared
+// fields. Common approaches:
+//   - Use a sync.Mutex in your state struct for fields written by parallel steps.
+//   - Assign disjoint fields to each step (e.g. step "email" writes EmailSentAt,
+//     step "sms" writes SmsSentAt) so no synchronization is needed.
+//
 // Use kata.Parallel() to create one.
 type ParallelDef[T any] struct {
 	name  string
@@ -25,6 +34,8 @@ type ParallelDef[T any] struct {
 }
 
 // Parallel creates a group of steps that execute concurrently.
+//
+// All steps share state T concurrently - see [ParallelDef] for thread safety notes.
 //
 //	kata.Parallel("notifications",
 //	    kata.Step("email", sendEmail),
@@ -84,7 +95,7 @@ func (p *ParallelDef[T]) execute(ctx context.Context, state T, h Hooks) error {
 	// Collect step failures.
 	// context.Canceled is filtered out when it is sibling-induced: one step fails,
 	// the group calls cancel(), and surviving siblings return context.Canceled as a
-	// side-effect — that is noise, not an additional failure.
+	// side-effect - that is noise, not an additional failure.
 	//
 	// However, if the *outer* ctx was cancelled by an external caller (SIGTERM,
 	// request timeout, etc.) before any step had a real domain error, every step
@@ -105,8 +116,8 @@ func (p *ParallelDef[T]) execute(ctx context.Context, state T, h Hooks) error {
 
 	if len(errs) == 0 {
 		// All errors (if any) were context.Canceled. Two sub-cases:
-		//   a) No real failure — every step succeeded. Happy path.
-		//   b) External ctx was cancelled — every step was interrupted from outside.
+		//   a) No real failure - every step succeeded. Happy path.
+		//   b) External ctx was cancelled - every step was interrupted from outside.
 		//      Distinguish via ctx.Err(): if the *outer* context is done and we did
 		//      filter at least one cancellation, the group was externally aborted.
 		if filteredCanceled && ctx.Err() != nil {

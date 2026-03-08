@@ -2,10 +2,10 @@ package kata
 
 import "context"
 
-// steper is the internal interface implemented by both StepDef and ParallelDef.
+// stepper is the internal interface implemented by both StepDef and ParallelDef.
 // Users of the library never interact with this interface directly - they use
-// flow.Step() and flow.Parallel() constructors instead.
-type steper[T any] interface {
+// kata.Step() and kata.Parallel() constructors instead.
+type stepper[T any] interface {
 	// stepName returns the name used for logging and error reporting.
 	stepName() string
 

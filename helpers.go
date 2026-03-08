@@ -6,7 +6,14 @@ import (
 )
 
 // withRetry executes fn, retrying up to `count` additional times on failure.
-func withRetry(ctx context.Context, count int, policy RetryPolicy, fn func(context.Context) error) error {
+// onRetry is called before each retry attempt (may be nil).
+func withRetry(
+	ctx context.Context,
+	count int,
+	policy RetryPolicy,
+	onRetry func(attempt int, err error),
+	fn func(context.Context) error,
+) error {
 	err := fn(ctx)
 	if err == nil || count == 0 {
 		return err
@@ -15,6 +22,9 @@ func withRetry(ctx context.Context, count int, policy RetryPolicy, fn func(conte
 	for attempt := 1; attempt <= count; attempt++ {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if onRetry != nil {
+			onRetry(attempt, err)
 		}
 		if policy != nil {
 			if wait := policy(attempt - 1); wait > 0 {
