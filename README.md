@@ -1,5 +1,9 @@
 # kata
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/kerlenton/kata.svg)](https://pkg.go.dev/github.com/kerlenton/kata)
+[![CI](https://github.com/kerlenton/kata/actions/workflows/ci.yml/badge.svg)](https://github.com/kerlenton/kata/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/kerlenton/kata/branch/main/graph/badge.svg)](https://codecov.io/gh/kerlenton/kata)
+
 > *In martial arts, a kata is a precise sequence of movements - executed with full commitment, or not at all. If you break the form, you return to the beginning.*
 
 **kata** is an embedded Go library for orchestrating multi-step operations with automatic compensation on failure. No external services, no databases, no brokers - just import and use.
@@ -308,7 +312,7 @@ func PlaceOrder(ctx context.Context, req *Request) error {
 | | kata | Temporal/Cadence | floxy | go-saga |
 |---|---|---|---|---|
 | External service required | ✗ | ✓ (server cluster) | ✗ | ✗ |
-| Persistent state | plug-in | ✓ | PostgreSQL | ✗ |
+| Persistent state | ✗ (in-memory) | ✓ | PostgreSQL | ✗ |
 | Generics (typed state) | ✓ | ✗ | ✗ | ✗ |
 | Parallel steps | ✓ | ✓ | ✓ | ✗ |
 | Nested parallel groups | ✓ | ✓ | ✗ | ✗ |

@@ -5,7 +5,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-03-09
+## [1.0.0] - 2026-04-06
 ### Added
 - `kata.Jitter(policy)` - composable wrapper adding ±25% random jitter to any retry policy
 - `kata.Cap(policy, max)` - composable wrapper capping delay at a maximum duration

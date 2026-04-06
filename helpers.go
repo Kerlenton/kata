@@ -28,10 +28,12 @@ func withRetry(
 		}
 		if policy != nil {
 			if wait := policy(attempt - 1); wait > 0 {
+				t := time.NewTimer(wait)
 				select {
 				case <-ctx.Done():
+					t.Stop()
 					return ctx.Err()
-				case <-time.After(wait):
+				case <-t.C:
 				}
 			}
 		}
