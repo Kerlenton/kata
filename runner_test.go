@@ -177,6 +177,14 @@ func TestStepErrorUnwrap(t *testing.T) {
 	if !errors.Is(err, sentinel) {
 		t.Error("StepError should unwrap to the original cause")
 	}
+
+	var stepErr *kata.StepError
+	if errors.As(err, &stepErr) {
+		msg := stepErr.Error()
+		if msg == "" {
+			t.Error("StepError.Error() should return non-empty string")
+		}
+	}
 }
 
 func TestCompensationErrorUnwrap(t *testing.T) {
@@ -192,6 +200,14 @@ func TestCompensationErrorUnwrap(t *testing.T) {
 	err := runner.Run(context.Background(), &testState{})
 	if !errors.Is(err, sentinel) {
 		t.Error("CompensationError should unwrap to the original step cause")
+	}
+
+	var compErr *kata.CompensationError
+	if errors.As(err, &compErr) {
+		msg := compErr.Error()
+		if msg == "" {
+			t.Error("CompensationError.Error() should return non-empty string")
+		}
 	}
 }
 
