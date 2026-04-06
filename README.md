@@ -512,6 +512,21 @@ The most useful feedback is:
 
 ---
 
+## Feedback
+
+Have a real workflow in mind, a concern, or an adoption blocker?
+
+Please join the discussion:
+[**kata v1.0.0 is out — looking for sharp feedback**](https://github.com/kerlenton/kata/discussions/10)
+
+The most useful feedback is:
+- what workflow you wanted to build
+- what would stop you from using kata in production
+- what felt unclear in the docs
+- what felt missing in the API
+
+---
+
 ## License
 
 MIT
