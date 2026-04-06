@@ -5,8 +5,10 @@ import "fmt"
 // StepError is returned when a step fails and all compensations ran successfully.
 // This means the saga was rolled back cleanly.
 type StepError struct {
+	// StepName is the name of the step that failed.
 	StepName string
-	Cause    error
+	// Cause is the original error returned by the step function.
+	Cause error
 }
 
 func (e *StepError) Error() string {
@@ -41,6 +43,8 @@ func (e *CompensationError) Unwrap() error {
 
 // CompensationFailure holds the name and error for a single failed compensation.
 type CompensationFailure struct {
+	// StepName is the name of the step whose compensation failed.
 	StepName string
-	Err      error
+	// Err is the error returned by the compensation function.
+	Err error
 }

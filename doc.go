@@ -14,7 +14,7 @@
 //	runner := kata.New(
 //	    kata.Step("charge", chargeCard).
 //	        Compensate(refundCard).
-//	        Retry(3, kata.Exponential(100*time.Millisecond)),
+//	        Retry(3, kata.Jitter(kata.Exponential(100*time.Millisecond))),
 //	    kata.Step("reserve", reserveStock).
 //	        Compensate(releaseStock),
 //	    kata.Step("ship", createShipment),
@@ -31,6 +31,15 @@
 //	    }
 //	}
 //
+// # Retry policies
+//
+// Retry policies are composable via wrappers:
+//
+//	kata.Exponential(100*time.Millisecond)                              // 100ms, 200ms, 400ms, ...
+//	kata.Jitter(kata.Exponential(100*time.Millisecond))                 // same with ±25% randomness
+//	kata.Cap(kata.Exponential(100*time.Millisecond), 30*time.Second)    // capped at 30s
+//	kata.Cap(kata.Jitter(kata.Exponential(100*time.Millisecond)), 30*time.Second)  // both
+//
 // # Parallel steps
 //
 // Use [Parallel] to run independent steps concurrently:
@@ -40,6 +49,9 @@
 //	    kata.Step("sms",   sendSMS).Compensate(cancelSMS),
 //	)
 //
+// All steps in a parallel group share state T concurrently.
+// See [ParallelDef] for thread safety guidance.
+//
 // # Observability
 //
 // Attach hooks for logging and metrics without changing step code:
@@ -47,5 +59,6 @@
 //	runner.WithOptions(kata.WithHooks(kata.Hooks{
 //	    OnStepStart:  func(ctx context.Context, name string) { ... },
 //	    OnStepFailed: func(ctx context.Context, name string, err error) { ... },
+//	    OnRetry:      func(ctx context.Context, name string, attempt int, err error) { ... },
 //	}))
 package kata

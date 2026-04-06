@@ -1,12 +1,16 @@
 # kata
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/kerlenton/kata.svg)](https://pkg.go.dev/github.com/kerlenton/kata)
+[![CI](https://github.com/kerlenton/kata/actions/workflows/ci.yml/badge.svg)](https://github.com/kerlenton/kata/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/kerlenton/kata/branch/main/graph/badge.svg)](https://codecov.io/gh/kerlenton/kata)
+
 > *In martial arts, a kata is a precise sequence of movements - executed with full commitment, or not at all. If you break the form, you return to the beginning.*
 
 **kata** is an embedded Go library for orchestrating multi-step operations with automatic compensation on failure. No external services, no databases, no brokers - just import and use.
 
 ```go
 runner := kata.New(
-    kata.Step("charge-card",   chargeCard).Compensate(refundCard).Retry(3, kata.Exponential(100*time.Millisecond)),
+    kata.Step("charge-card",   chargeCard).Compensate(refundCard).Retry(3, kata.Jitter(kata.Exponential(100*time.Millisecond))),
     kata.Step("reserve-stock", reserveStock).Compensate(releaseStock),
     kata.Step("create-shipment", createShipment),
 )
@@ -75,6 +79,21 @@ kata.Step("call-fast", callFast).
     Retry(2, kata.NoDelay)
 ```
 
+Retry policies are composable - wrap them to add jitter or cap the delay:
+
+```go
+// Add ±25% random jitter to prevent thundering herd
+kata.Jitter(kata.Exponential(100*time.Millisecond))
+
+// Cap maximum delay at 30 seconds
+kata.Cap(kata.Exponential(100*time.Millisecond), 30*time.Second)
+
+// Combine both
+kata.Cap(kata.Jitter(kata.Exponential(100*time.Millisecond)), 30*time.Second)
+```
+
+`Exponential` has a built-in ceiling of 5 minutes to prevent overflow at high retry counts.
+
 ### Timeout
 
 ```go
@@ -98,6 +117,23 @@ kata.Parallel("notify-customer",
 
 If a later sequential step fails after the parallel group succeeds, all steps in the group are compensated in reverse order.
 
+Parallel groups can be nested - useful when you have logically distinct groups that should run concurrently with each other:
+
+```go
+kata.Parallel("all-notifications",
+    kata.Parallel("customer",
+        kata.Step("email", sendEmail),
+        kata.Step("sms",   sendSMS),
+    ),
+    kata.Parallel("internal",
+        kata.Step("slack",     notifySlack),
+        kata.Step("analytics", trackEvent),
+    ),
+)
+```
+
+**Thread safety:** all steps in a parallel group share state `T` concurrently. Either assign disjoint fields to each step, or protect shared fields with a `sync.Mutex` in your state struct.
+
 ### Runner
 
 `New` creates a reusable runner - define it once, call `Run` per request:
@@ -119,6 +155,8 @@ func (s *OrderService) PlaceOrder(ctx context.Context, req *PlaceOrderRequest) e
     return orderRunner.Run(ctx, state)
 }
 ```
+
+The runner checks the context between steps - if the context is cancelled (e.g. SIGTERM, request timeout), it stops immediately and compensates all completed steps. Compensation always runs with `context.Background()` to guarantee rollback completes regardless of the caller's context.
 
 ---
 
@@ -153,6 +191,8 @@ case errors.As(err, &compErr):
 }
 ```
 
+Both error types implement `Unwrap()`, so `errors.Is` works against the original cause.
+
 ---
 
 ## Observability
@@ -171,6 +211,9 @@ runner := kata.New(steps...).WithOptions(
         OnStepFailed: func(ctx context.Context, name string, err error) {
             log.Errorf("step %q failed: %v", name, err)
         },
+        OnRetry: func(ctx context.Context, name string, attempt int, err error) {
+            log.Warnf("retrying %q (attempt %d): %v", name, attempt, err)
+        },
         OnCompensationStart: func(ctx context.Context, name string) {
             log.Warnf("compensating %q", name)
         },
@@ -188,6 +231,7 @@ Available hooks:
 | `OnStepStart` | Before a step begins |
 | `OnStepDone` | After a step succeeds |
 | `OnStepFailed` | After a step exhausts all retries and fails |
+| `OnRetry` | Before each retry attempt (with attempt number and previous error) |
 | `OnCompensationStart` | Before a compensation begins |
 | `OnCompensationDone` | After a compensation succeeds |
 | `OnCompensationFailed` | After a compensation fails |
@@ -205,7 +249,7 @@ type OrderState struct {
     Amount    int64
 
     // filled in by steps
-    ChargeID    string
+    ChargeID      string
     ReservationID string
 }
 
@@ -216,7 +260,7 @@ var orderRunner = kata.New(
         return err
     }).Compensate(func(ctx context.Context, s *OrderState) error {
         return payments.Refund(ctx, s.ChargeID)
-    }).Retry(3, kata.Exponential(100*time.Millisecond)).Timeout(10*time.Second),
+    }).Retry(3, kata.Jitter(kata.Exponential(100*time.Millisecond))).Timeout(10*time.Second),
 
     kata.Step("reserve-stock", func(ctx context.Context, s *OrderState) error {
         id, err := warehouse.Reserve(ctx, s.ItemID)
@@ -268,11 +312,13 @@ func PlaceOrder(ctx context.Context, req *Request) error {
 | | kata | Temporal/Cadence | floxy | go-saga |
 |---|---|---|---|---|
 | External service required | ✗ | ✓ (server cluster) | ✗ | ✗ |
-| Persistent state | plug-in | ✓ | PostgreSQL | ✗ |
+| Persistent state | ✗ (in-memory) | ✓ | PostgreSQL | ✗ |
 | Generics (typed state) | ✓ | ✗ | ✗ | ✗ |
 | Parallel steps | ✓ | ✓ | ✓ | ✗ |
+| Nested parallel groups | ✓ | ✓ | ✗ | ✗ |
 | Per-step retry + backoff | ✓ | ✓ | ✓ | ✗ |
 | Per-step timeout | ✓ | ✓ | ✗ | ✗ |
+| Composable retry policies | ✓ | ✗ | ✗ | ✗ |
 | Observability hooks | ✓ | ✓ | ✗ | ✗ |
 | Zero dependencies | ✓ | ✗ | ✗ | ✓ |
 

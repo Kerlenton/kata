@@ -5,6 +5,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-04-06
+### Added
+- `kata.Jitter(policy)` - composable wrapper adding ±25% random jitter to any retry policy
+- `kata.Cap(policy, max)` - composable wrapper capping delay at a maximum duration
+- `OnRetry` hook - called before each retry attempt with step name, attempt number, and previous error
+- Runner now checks `ctx.Err()` between steps, stopping early on cancellation (e.g. SIGTERM)
+- Overflow protection in `Exponential` - capped at 5 minutes to prevent int64 overflow
+- Thread safety documentation for `ParallelDef` / `Parallel` groups
+- Benchmarks for sequential, parallel, compensation, and retry policy paths
+- Split tests into per-module files: `runner_test.go`, `parallel_test.go`, `retry_test.go`, `hooks_test.go`, `bench_test.go`, `common_test.go`
+
+### Changed
+- `kata.Parallel()` now accepts both `Step` and nested `Parallel` groups (previously only `*StepDef`)
+- Renamed internal interface `steper` → `stepper` (unexported, no breaking change)
+- `withRetry` now accepts an `onRetry` callback parameter (internal, no breaking change)
+
 ## [0.1.1] - 2026-02-23
 ### Fixed
 - Compensations now run with `context.Background()` instead of the caller's context,
@@ -35,6 +51,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zero external dependencies
 - Requires Go 1.22+
 
-[Unreleased]: https://github.com/kerlenton/kata/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/kerlenton/kata/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/kerlenton/kata/compare/v0.1.1...v1.0.0
 [0.1.1]: https://github.com/kerlenton/kata/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/kerlenton/kata/releases/tag/v0.1.0
