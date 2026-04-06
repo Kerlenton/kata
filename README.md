@@ -4,33 +4,103 @@
 [![CI](https://github.com/kerlenton/kata/actions/workflows/ci.yml/badge.svg)](https://github.com/kerlenton/kata/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/kerlenton/kata/branch/main/graph/badge.svg)](https://codecov.io/gh/kerlenton/kata)
 
-> *In martial arts, a kata is a precise sequence of movements - executed with full commitment, or not at all. If you break the form, you return to the beginning.*
+> In martial arts, a kata is a precise sequence of movements: executed fully, or not at all.
 
-**kata** is an embedded Go library for orchestrating multi-step operations with automatic compensation on failure. No external services, no databases, no brokers - just import and use.
+**kata** is an in-process orchestration library for Go for multi-step operations with automatic compensation on failure.
+
+It helps you model workflows like:
+
+- charge a card
+- reserve stock
+- create a shipment
+- send notifications
+- write audit records
+
+If a later step fails, kata compensates completed steps in reverse order.
+
+No external services. No brokers. No workflow cluster. Just import and run.
 
 ```go
 runner := kata.New(
-    kata.Step("charge-card",   chargeCard).Compensate(refundCard).Retry(3, kata.Jitter(kata.Exponential(100*time.Millisecond))),
-    kata.Step("reserve-stock", reserveStock).Compensate(releaseStock),
+    kata.Step("charge-card", chargeCard).
+        Compensate(refundCard).
+        Retry(3, kata.Jitter(kata.Exponential(100*time.Millisecond))),
+
+    kata.Step("reserve-stock", reserveStock).
+        Compensate(releaseStock),
+
     kata.Step("create-shipment", createShipment),
 )
 
-if err := runner.Run(ctx, &OrderState{CardToken: "tok_123", Amount: 9900}); err != nil {
-    // all compensations already ran automatically
+if err := runner.Run(ctx, &OrderState{
+    CardToken: "tok_123",
+    Amount:    9900,
+}); err != nil {
+    // completed steps were already compensated automatically
 }
-```
+````
 
-If `create-shipment` fails, kata automatically calls `releaseStock` then `refundCard` - in reverse order, with the full state available.
+If `create-shipment` fails, kata compensates completed steps in reverse order:
+
+1. `reserve-stock` → `release-stock`
+2. `charge-card` → `refund-card`
 
 ---
 
 ## Why kata?
 
-Every non-trivial service has operations that span multiple steps: charge a card, reserve inventory, create a shipment. When step 3 fails, you need to undo steps 1 and 2. Most teams write this rollback logic by hand - scattered `defer` calls, nested `if err != nil` blocks, easy to get wrong.
+A lot of backend workflows are really just:
 
-The alternatives are either too heavy (Temporal, Cadence require a dedicated server cluster) or too primitive (existing Go saga libraries have no generics, no retry, no parallel execution).
+1. do step A
+2. do step B
+3. do step C
+4. if C fails, undo B and A
 
-kata sits in the middle: **zero dependencies**, idiomatic Go, production-ready features.
+Most teams implement this by hand with scattered rollback code, nested `if err != nil`, ad-hoc retries, and unclear failure handling.
+
+kata gives you one place to define that flow explicitly.
+
+It is inspired by compensation-based workflow patterns, but it is **not** a durable distributed workflow engine.
+
+kata sits in the middle between:
+
+* hand-written rollback logic that is easy to get wrong
+* heavyweight orchestration systems that need their own infrastructure
+
+---
+
+## Use kata when
+
+Use kata when you need:
+
+* a small to medium in-process workflow
+* shared typed state across steps
+* automatic compensation on failure
+* per-step retry and timeout
+* optional parallel execution
+* hooks for logs, metrics, or tracing
+
+Typical use cases:
+
+* order placement
+* payment + inventory reservation
+* user onboarding flows
+* local service orchestration inside one Go process
+* workflows where rollback is application-level, not database-transaction-level
+
+---
+
+## Don't use kata when
+
+kata is **not** the right tool when you need:
+
+* persisted workflow state
+* recovery after process crash
+* long-running workflows across hours or days
+* cross-process durability guarantees
+* a distributed workflow engine
+
+If you need durable execution and recovery, use a different class of tool.
 
 ---
 
@@ -44,11 +114,65 @@ Requires Go 1.22+.
 
 ---
 
+## Quick start
+
+```go
+type OrderState struct {
+    CardToken     string
+    Amount        int64
+    ItemID        string
+    ChargeID      string
+    ReservationID string
+}
+
+runner := kata.New(
+    kata.Step("charge-card", func(ctx context.Context, s *OrderState) error {
+        id, err := payments.Charge(ctx, s.CardToken, s.Amount)
+        if err != nil {
+            return err
+        }
+        s.ChargeID = id
+        return nil
+    }).Compensate(func(ctx context.Context, s *OrderState) error {
+        return payments.Refund(ctx, s.ChargeID)
+    }),
+
+    kata.Step("reserve-stock", func(ctx context.Context, s *OrderState) error {
+        id, err := warehouse.Reserve(ctx, s.ItemID)
+        if err != nil {
+            return err
+        }
+        s.ReservationID = id
+        return nil
+    }).Compensate(func(ctx context.Context, s *OrderState) error {
+        return warehouse.Release(ctx, s.ReservationID)
+    }),
+
+    kata.Step("create-shipment", func(ctx context.Context, s *OrderState) error {
+        return shipping.Create(ctx, s.ReservationID)
+    }),
+)
+
+state := &OrderState{
+    CardToken: "tok_123",
+    Amount:    9900,
+    ItemID:    "sku_42",
+}
+
+if err := runner.Run(ctx, state); err != nil {
+    return err
+}
+```
+
+---
+
 ## Core concepts
 
-### Steps
+### Step
 
-A `Step` is a named operation that reads from and writes to your shared state. Each step can optionally define a compensation (rollback) function.
+A `Step` is a named operation that reads from and writes to shared state.
+
+Each step can optionally define a compensation function.
 
 ```go
 kata.Step("charge-card", func(ctx context.Context, s *OrderState) error {
@@ -56,21 +180,37 @@ kata.Step("charge-card", func(ctx context.Context, s *OrderState) error {
     if err != nil {
         return err
     }
-    s.ChargeID = id // store result for later steps (and compensation)
+    s.ChargeID = id
     return nil
 }).Compensate(func(ctx context.Context, s *OrderState) error {
     return stripe.Refund(s.ChargeID)
 })
 ```
 
-### Retry
+A compensation should undo the side effects of the step as much as possible.
 
-Steps can be retried with configurable backoff:
+### Shared typed state
+
+kata uses a shared state value of type `T` across all steps.
+
+That means each step can:
+
+* read inputs from previous steps
+* write outputs for later steps
+* use the same state during compensation
+
+This keeps the workflow explicit and type-safe.
+
+---
+
+## Retry
+
+Retries are configured per step.
 
 ```go
 kata.Step("call-flaky-api", callAPI).
     Retry(3, kata.Exponential(100*time.Millisecond))
-    // attempts: immediate -> 100ms -> 200ms -> 400ms
+// attempts: immediate -> 100ms -> 200ms -> 400ms
 
 kata.Step("call-another", callOther).
     Retry(5, kata.Fixed(1*time.Second))
@@ -79,90 +219,107 @@ kata.Step("call-fast", callFast).
     Retry(2, kata.NoDelay)
 ```
 
-Retry policies are composable - wrap them to add jitter or cap the delay:
+Retry policies are composable:
 
 ```go
-// Add ±25% random jitter to prevent thundering herd
+// Add jitter
 kata.Jitter(kata.Exponential(100*time.Millisecond))
 
-// Cap maximum delay at 30 seconds
+// Cap maximum delay
 kata.Cap(kata.Exponential(100*time.Millisecond), 30*time.Second)
 
 // Combine both
 kata.Cap(kata.Jitter(kata.Exponential(100*time.Millisecond)), 30*time.Second)
 ```
 
-`Exponential` has a built-in ceiling of 5 minutes to prevent overflow at high retry counts.
+`Exponential` has a built-in ceiling of 5 minutes to avoid overflow at high retry counts.
 
-### Timeout
+---
+
+## Timeout
 
 ```go
 kata.Step("slow-step", doWork).
     Timeout(5 * time.Second)
 ```
 
-If the step exceeds the timeout, the context is cancelled and the step fails with `context.DeadlineExceeded`. Compensations are triggered normally.
+If a step exceeds its timeout, the step fails with `context.DeadlineExceeded` and compensation runs normally.
 
-### Parallel steps
+---
 
-Run multiple steps concurrently within a group. If any step in the group fails, the others are cancelled and the successful ones are compensated.
+## Parallel steps
+
+Run multiple steps concurrently inside a group.
 
 ```go
 kata.Parallel("notify-customer",
     kata.Step("send-email", sendEmail),
-    kata.Step("send-sms",   sendSMS).Compensate(cancelSMS),
-    kata.Step("send-push",  sendPush),
+    kata.Step("send-sms", sendSMS).Compensate(cancelSMS),
+    kata.Step("send-push", sendPush),
 )
 ```
 
-If a later sequential step fails after the parallel group succeeds, all steps in the group are compensated in reverse order.
+If any step in the group fails:
 
-Parallel groups can be nested - useful when you have logically distinct groups that should run concurrently with each other:
+* the remaining steps are cancelled
+* successful steps in the group are compensated
+
+If a later sequential step fails after the parallel group succeeded, the successful steps in the group are also compensated in reverse order.
+
+Parallel groups can be nested:
 
 ```go
 kata.Parallel("all-notifications",
     kata.Parallel("customer",
         kata.Step("email", sendEmail),
-        kata.Step("sms",   sendSMS),
+        kata.Step("sms", sendSMS),
     ),
     kata.Parallel("internal",
-        kata.Step("slack",     notifySlack),
+        kata.Step("slack", notifySlack),
         kata.Step("analytics", trackEvent),
     ),
 )
 ```
 
-**Thread safety:** all steps in a parallel group share state `T` concurrently. Either assign disjoint fields to each step, or protect shared fields with a `sync.Mutex` in your state struct.
+**Thread safety:** all steps in a parallel group share state `T` concurrently. Use disjoint fields or protect shared fields with a `sync.Mutex`.
 
-### Runner
+---
 
-`New` creates a reusable runner - define it once, call `Run` per request:
+## Runner
+
+Create a runner once and execute it per request.
 
 ```go
-// define once (e.g. at startup or in a constructor)
 var orderRunner = kata.New(
-    kata.Step("charge",  chargeCard).Compensate(refundCard),
+    kata.Step("charge", chargeCard).Compensate(refundCard),
     kata.Step("reserve", reserveStock).Compensate(releaseStock),
     kata.Parallel("notify",
         kata.Step("email", sendEmail),
-        kata.Step("sms",   sendSMS),
+        kata.Step("sms", sendSMS),
     ),
 )
 
-// call per request
 func (s *OrderService) PlaceOrder(ctx context.Context, req *PlaceOrderRequest) error {
-    state := &OrderState{CardToken: req.CardToken, ItemID: req.ItemID}
+    state := &OrderState{
+        CardToken: req.CardToken,
+        ItemID:    req.ItemID,
+    }
     return orderRunner.Run(ctx, state)
 }
 ```
 
-The runner checks the context between steps - if the context is cancelled (e.g. SIGTERM, request timeout), it stops immediately and compensates all completed steps. Compensation always runs with `context.Background()` to guarantee rollback completes regardless of the caller's context.
+The runner checks context cancellation between steps. If the context is cancelled, kata stops and compensates completed steps.
+
+Compensation always runs with `context.Background()` so rollback is not interrupted by the caller's cancelled context.
 
 ---
 
 ## Error handling
 
 kata distinguishes between two failure modes:
+
+1. a step failed, but compensation completed successfully
+2. a step failed, and one or more compensations also failed
 
 ```go
 err := runner.Run(ctx, state)
@@ -172,32 +329,28 @@ var compErr *kata.CompensationError
 
 switch {
 case err == nil:
-    // all steps succeeded
+    // workflow completed successfully
 
 case errors.As(err, &stepErr):
-    // a step failed, all compensations ran successfully
-    // stepErr.StepName - which step failed
-    // stepErr.Cause   - the original error
-    log.Printf("rolled back cleanly after %q: %v", stepErr.StepName, stepErr.Cause)
+    // a step failed, compensation completed successfully
+    log.Printf("rolled back after %q: %v", stepErr.StepName, stepErr.Cause)
 
 case errors.As(err, &compErr):
-    // a step failed AND one or more compensations also failed
-    // the system may be in a partially inconsistent state
-    // manual intervention may be required
-    log.Printf("ALERT: step %q failed, compensations also failed:", compErr.StepName)
+    // a step failed and one or more compensations failed
+    log.Printf("ALERT: step %q failed, compensation also failed", compErr.StepName)
     for _, f := range compErr.Failed {
         log.Printf("  - %q: %v", f.StepName, f.Err)
     }
 }
 ```
 
-Both error types implement `Unwrap()`, so `errors.Is` works against the original cause.
+Both error types implement `Unwrap()`, so `errors.Is` works with the original cause.
 
 ---
 
 ## Observability
 
-Attach hooks for logging, metrics, or tracing - no changes to step code required:
+Attach hooks for logging, metrics, or tracing without changing step code.
 
 ```go
 runner := kata.New(steps...).WithOptions(
@@ -226,15 +379,15 @@ runner := kata.New(steps...).WithOptions(
 
 Available hooks:
 
-| Hook | When |
-|---|---|
-| `OnStepStart` | Before a step begins |
-| `OnStepDone` | After a step succeeds |
-| `OnStepFailed` | After a step exhausts all retries and fails |
-| `OnRetry` | Before each retry attempt (with attempt number and previous error) |
-| `OnCompensationStart` | Before a compensation begins |
-| `OnCompensationDone` | After a compensation succeeds |
-| `OnCompensationFailed` | After a compensation fails |
+| Hook                   | When                                    |
+| ---------------------- | --------------------------------------- |
+| `OnStepStart`          | Before a step begins                    |
+| `OnStepDone`           | After a step succeeds                   |
+| `OnStepFailed`         | After a step exhausts retries and fails |
+| `OnRetry`              | Before each retry attempt               |
+| `OnCompensationStart`  | Before a compensation begins            |
+| `OnCompensationDone`   | After a compensation succeeds           |
+| `OnCompensationFailed` | After a compensation fails              |
 
 ---
 
@@ -248,7 +401,7 @@ type OrderState struct {
     UserEmail string
     Amount    int64
 
-    // filled in by steps
+    // filled by steps
     ChargeID      string
     ReservationID string
 }
@@ -296,7 +449,6 @@ func PlaceOrder(ctx context.Context, req *Request) error {
     if err != nil {
         var compErr *kata.CompensationError
         if errors.As(err, &compErr) {
-            // compensation failed - alert on-call
             pagerduty.Fire(compErr)
         }
         return err
@@ -307,20 +459,56 @@ func PlaceOrder(ctx context.Context, req *Request) error {
 
 ---
 
+## Why not just write this by hand?
+
+You can.
+
+But hand-rolled compensation logic usually turns into:
+
+* duplicated retry behavior
+* duplicated timeout behavior
+* rollback code spread across multiple branches
+* inconsistent compensation order
+* unclear observability
+* fragile maintenance as workflows evolve
+
+kata keeps that logic in one place.
+
+---
+
 ## Comparison
 
-| | kata | Temporal/Cadence | floxy | go-saga |
-|---|---|---|---|---|
-| External service required | ✗ | ✓ (server cluster) | ✗ | ✗ |
-| Persistent state | ✗ (in-memory) | ✓ | PostgreSQL | ✗ |
-| Generics (typed state) | ✓ | ✗ | ✗ | ✗ |
-| Parallel steps | ✓ | ✓ | ✓ | ✗ |
-| Nested parallel groups | ✓ | ✓ | ✗ | ✗ |
-| Per-step retry + backoff | ✓ | ✓ | ✓ | ✗ |
-| Per-step timeout | ✓ | ✓ | ✗ | ✗ |
-| Composable retry policies | ✓ | ✗ | ✗ | ✗ |
-| Observability hooks | ✓ | ✓ | ✗ | ✗ |
-| Zero dependencies | ✓ | ✗ | ✗ | ✓ |
+|                           | kata          | Temporal/Cadence   | floxy      | go-saga |
+| ------------------------- | ------------- | ------------------ | ---------- | ------- |
+| External service required | ✗             | ✓ (server cluster) | ✗          | ✗       |
+| Persistent state          | ✗ (in-memory) | ✓                  | PostgreSQL | ✗       |
+| Typed shared state        | ✓             | ✗                  | ✗          | ✗       |
+| Parallel steps            | ✓             | ✓                  | ✓          | ✗       |
+| Nested parallel groups    | ✓             | ✓                  | ✗          | ✗       |
+| Per-step retry + backoff  | ✓             | ✓                  | ✓          | ✗       |
+| Per-step timeout          | ✓             | ✓                  | ✗          | ✗       |
+| Composable retry policies | ✓             | ✗                  | ✗          | ✗       |
+| Observability hooks       | ✓             | ✓                  | ✗          | ✗       |
+| Zero dependencies         | ✓             | ✗                  | ✗          | ✓       |
+
+---
+
+## Feedback wanted
+
+`kata` is now stable enough to use, and I want real-world feedback.
+
+Please open an issue or discussion if:
+
+* you tried kata on a real workflow
+* something in the API felt awkward
+* docs were unclear
+* you considered using it but decided not to
+
+The most useful feedback is:
+
+* what workflow you wanted to build
+* what blocked adoption
+* what felt missing or confusing
 
 ---
 
